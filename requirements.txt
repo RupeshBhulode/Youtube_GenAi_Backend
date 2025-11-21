@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+chromadb
+google-genai
+yt-dlp
+pydantic
+python-multipart
