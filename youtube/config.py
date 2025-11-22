@@ -3,6 +3,10 @@ config.py - Application configuration
 """
 from pathlib import Path
 
+BASE_DIR = Path(__file__).resolve().parent  # folder: youtube/
+COOKIES_FILE = BASE_DIR / "cookies.txt"
+
+
 # CORS origins
 CORS_ORIGINS = [
     "http://localhost:3000",
