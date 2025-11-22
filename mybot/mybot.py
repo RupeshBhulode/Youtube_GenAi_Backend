@@ -2,11 +2,17 @@ from fastapi import APIRouter
 
 from google import genai
 from google.genai import types
+import os
+from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 # ------------------------
 # Gemini client (your key as provided)
 # ------------------------
-client = genai.Client(api_key="AIzaSyDrIJQ3H69nXpU4dQ9yco7IQgCmZhCr9EU")
+client = genai.Client(api_key=GOOGLE_API_KEY)
 
 router = APIRouter()
 
