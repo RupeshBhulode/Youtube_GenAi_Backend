@@ -33,6 +33,7 @@ def inspect_metadata(url: str) -> dict:
 
 def download_auto_caption(
     url: str,
+    video_id: str,
     lang: str = "en",
     player_client: Optional[str] = None,
     out_dir: Path = OUT_DIR,
@@ -58,17 +59,13 @@ def download_auto_caption(
             ydl.download([url])
     except Exception as e:
         print(f"Warning: Download failed for lang={lang}, client={player_client}: {e}")
+        # You could optionally detect 429 here and bubble it up
+        # if "HTTP Error 429" in str(e):
+        #     raise RuntimeError("YOUTUBE_RATE_LIMIT")
         pass
 
-    # Determine video ID
-    vid = None
-    try:
-        with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-            vid = info.get("id")
-    except Exception:
-        vid = url.split("v=")[-1].split("&")[0].split("/")[-1]
-
+    # We already know the video_id from metadata; no need to call extract_info again
+    vid = video_id
     if not vid:
         print("Warning: Could not determine video ID")
         return None
@@ -129,17 +126,16 @@ def fetch_youtube_transcript(
     print(f"Available auto captions: {auto_langs}")
     print(f"Available manual subtitles: {list(meta['manual'].keys())}")
     
-    # Build ordered language list
+    # Build ordered language list (only from available auto_langs)
     ordered = []
     for p in (preferred_langs or []):
-        if p not in ordered:
+        if p in auto_langs and p not in ordered:
             ordered.append(p)
-    for a in auto_langs:
-        if a not in ordered:
-            ordered.append(a)
-    for common in ("en", "hi"):
-        if common not in ordered:
-            ordered.append(common)
+    if not ordered:
+        # fallback: try at most first 3 auto languages to avoid hammering
+        ordered = auto_langs[:3]
+
+    print(f"Languages that will actually be tried: {ordered}")
 
     clients = YOUTUBE_CLIENTS
     
@@ -150,7 +146,8 @@ def fetch_youtube_transcript(
             client_label = client or "default"
             print(f"  Trying player_client={client_label}...", end=" ")
             
-            path = download_auto_caption(url, lang=lang, player_client=client)
+            # ✅ pass video_id to avoid extra extract_info calls
+            path = download_auto_caption(url, video_id=vid, lang=lang, player_client=client)
             if path:
                 print("SUCCESS")
                 from youtube.vtt_processor import vtt_to_plaintext
