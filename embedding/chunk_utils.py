@@ -4,12 +4,18 @@ from typing import List, Dict, Any
 import json
 from google import genai
 from google.genai import types
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 EMBED_MODEL = "gemini-embedding-001"
 EMBED_DIM = 768
 
 # Initialize Gemini client
-client = genai.Client(api_key="AIzaSyAWF7AtLA7jC2j8GfxJS6thasdxiQa1X7Y")
+client = genai.Client(api_key=GOOGLE_API_KEY)
 
 def create_chunks_from_paragraphs(
     paragraphs: List[str],
