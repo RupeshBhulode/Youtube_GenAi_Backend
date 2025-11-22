@@ -5,13 +5,23 @@ from pathlib import Path
 from yt_dlp import YoutubeDL
 from typing import Optional, List
 import time
-from youtube.config import OUT_DIR, YOUTUBE_CLIENTS, MAX_CLIENTS_TRY, DEFAULT_LANGUAGES
+from youtube.config import (
+    OUT_DIR,
+    YOUTUBE_CLIENTS,
+    MAX_CLIENTS_TRY,
+    DEFAULT_LANGUAGES,
+    COOKIES_FILE,      # 🔹 make sure this is defined in config.py
+)
 
 
 def inspect_metadata(url: str) -> dict:
     """Extract video metadata including available subtitles."""
     try:
-        with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+        with YoutubeDL({
+            "quiet": True,
+            "no_warnings": True,
+            "cookiefile": str(COOKIES_FILE),   # 🔹 use cookies for metadata too
+        }) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         print(f"Error in inspect_metadata: {e}")
@@ -49,6 +59,7 @@ def download_auto_caption(
         "writeautomaticsub": True,
         "subtitleslangs": [lang] if lang else None,
         "subtitlesformat": "vtt",
+        "cookiefile": str(COOKIES_FILE),   # 🔹 use cookies for auto captions
     }
     
     if player_client:
@@ -190,6 +201,7 @@ def fetch_youtube_transcript(
                 "writeautomaticsub": False,
                 "subtitleslangs": [lang_try],
                 "subtitlesformat": "vtt",
+                "cookiefile": str(COOKIES_FILE),   # 🔹 use cookies for manual subs too
             }
             
             try:
