@@ -9,13 +9,19 @@ from query.question import get_actual_question
 from chroma.chroma_store import _make_chroma_client  # Same function you already have!
 from query.answer import bot_answer,english
 from chat_db.databse import create_database,append_data
+import os
+from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 router = APIRouter()
 
 # SAME GEMINI MODEL USED DURING CHUNKING
 EMBED_MODEL = "gemini-embedding-001"
 EMBED_DIM = 768
-client = genai.Client(api_key="AIzaSyAWF7AtLA7jC2j8GfxJS6thasdxiQa1X7Y")  # IMPORTANT: REPLACE YOUR KEY!
+client = genai.Client(api_key=GOOGLE_API_KEY) # IMPORTANT: REPLACE YOUR KEY!
 
 create_database()
 
