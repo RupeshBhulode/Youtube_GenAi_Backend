@@ -10,7 +10,7 @@ from chat_db.summary import router as sum_router
 from chroma.chroma_store import clear_chromadb
 from chat_db.databse import delete_all_records
 from mybot.mybot import router as bot_router
-from new_youtube import router as new_router
+from youtube.new_youtube import router as new_router
 app = FastAPI(title="YouTube Captions Cleaner API")
 
 app.add_middleware(
@@ -27,7 +27,6 @@ app.include_router(his_router, prefix="")
 app.include_router(sum_router, prefix="")
 app.include_router(bot_router, prefix="")
 app.include_router(new_router, prefix="")
-
 @app.get("/")
 def root():
     return {"status": "ok", "message": "YouTube Captions API is running"}
