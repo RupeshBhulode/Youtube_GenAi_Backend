@@ -4,7 +4,15 @@ from chat_db.summary import summary
 # ------------------------
 # Gemini client (your key as provided)
 # ------------------------
-client = genai.Client(api_key="AIzaSyDrIJQ3H69nXpU4dQ9yco7IQgCmZhCr9EU")
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+client = genai.Client(api_key=GOOGLE_API_KEY)
+
 
 s = summary()
 
