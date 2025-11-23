@@ -1,14 +1,16 @@
 import re
+import time
 import traceback
 from pathlib import Path
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube.config import OUT_DIR, YOUTUBE_CLIENTS, MAX_CLIENTS_TRY, DEFAULT_LANGUAGES
-from embedding.chunk_utils import create_chunks_from_paragraphs
-from chroma.chroma_store import store_embeddings_in_chroma
+
+# ⛔️ OLD: direct YouTube transcript fetch (causing IP issues on Render)
+# from youtube_transcript_api import YouTubeTranscriptApi
+# from youtube.config import OUT_DIR, YOUTUBE_CLIENTS, MAX_CLIENTS_TRY, DEFAULT_LANGUAGES
+
 from youtube.config import (
     OUT_DIR,
     DEFAULT_CHUNK_SIZE,
@@ -16,17 +18,17 @@ from youtube.config import (
     DEFAULT_COLLECTION_NAME,
     DEFAULT_PERSIST_DIR,
 )
+from embedding.chunk_utils import create_chunks_from_paragraphs
+from chroma.chroma_store import store_embeddings_in_chroma
 from chat_db.databse import delete_all_records
 from youtube.file_utils import clear_out_dir
-# whatever modules you already had:
-# from your_module import (
-#     DEFAULT_CHUNK_SIZE,
-#     DEFAULT_CHUNK_OVERLAP,
-#     DEFAULT_COLLECTION_NAME,
-#     DEFAULT_PERSIST_DIR,
-#     clear_out_dir,
-#     delete_all_records,
-# )
+
+# ✅ NEW: Supadata transcript service (works around YouTube IP blocking)
+from supadata import Supadata
+
+# ⚠️ Hardcoded API Key — okay for now, but don't commit this to public repos
+SUPADATA_API_KEY = "sd_0ae31fca72274fbc1482b0a4ff5a05ee"
+supadata = Supadata(api_key=SUPADATA_API_KEY)
 
 router = APIRouter()
 
@@ -56,7 +58,7 @@ def extract_video_id(url_or_id: str) -> str:
 # --- main endpoint ---
 @router.get(
     "/yt_url_chunks_inmemory",
-    summary="My Application",
+    summary="My Application Old new ",
 )
 def yt_url_chunks_inmemory(
     url: str = Query(..., description="YouTube URL or video id"),
@@ -68,7 +70,7 @@ def yt_url_chunks_inmemory(
     reset_collection: bool = Query(True, description="Reset the ChromaDB collection before inserting"),
 ):
     """
-    Fetch YouTube transcript via youtube-transcript-api,
+    Fetch YouTube transcript via Supadata,
     clean it into paragraphs, create overlapping chunks,
     generate embeddings, and store them into ChromaDB.
     """
@@ -92,32 +94,90 @@ def yt_url_chunks_inmemory(
         if not url.strip():
             raise HTTPException(status_code=400, detail="URL or video id is required")
 
-        # Extract video_id
+        # Extract video_id for filenames/metadata, but Supadata will use full URL
         video_id = extract_video_id(url)
         print(f"Resolved video_id = {video_id}")
 
-        # ---- FETCH TRANSCRIPT (new logic) ----
+        # ---- FETCH TRANSCRIPT VIA SUPADATA (new logic) ----
         try:
-            api = YouTubeTranscriptApi()
-            fetched = api.fetch(video_id, languages=preferred)
+            # choose first preferred language if possible, fallback to 'en'
+            chosen_lang = preferred[0] if preferred else "en"
+
+            # Important: pass the original URL (not only video_id)
+            transcript_result = supadata.transcript(
+                url=url,
+                lang=chosen_lang,
+                text=True,
+                mode="auto",  # 'native', 'auto', or 'generate'
+            )
+            print(f"Got transcript result or job ID from Supadata: {transcript_result}")
         except Exception as e:
-            print(f"Error while fetching transcript:\n{traceback.format_exc()}")
+            print(f"Error while fetching transcript from Supadata:\n{traceback.format_exc()}")
             raise HTTPException(
-                status_code=404,
-                detail=f"Transcript not available: {str(e)}",
+                status_code=502,
+                detail=f"Transcript service error: {str(e)}",
             )
 
-        # fetched is a FetchedTranscript object (iterable of FetchedTranscriptSnippet)
-        # join all text into one big string
-        raw_text = " ".join(snippet.text for snippet in fetched)
+        # ---- RESOLVE TRANSCRIPT TEXT FROM SUPADATA RESPONSE ----
+        raw_text = ""
+        status = "unknown"
 
-        # Clean spaces / punctuation a bit
+        # Case 1: direct string
+        if isinstance(transcript_result, str):
+            status = "completed"
+            raw_text = transcript_result
+
+        # Case 2: object with 'content'
+        elif hasattr(transcript_result, "content"):
+            status = "completed"
+            raw_text = transcript_result.content
+
+        # Case 3: async job, we need to poll get_job_status
+        elif hasattr(transcript_result, "job_id"):
+            job_id = transcript_result.job_id
+            print(f"Supadata returned job_id={job_id}, polling for completion...")
+
+            # simple polling loop (up to ~20 seconds)
+            for _ in range(10):
+                job = supadata.transcript.get_job_status(job_id)
+                status = getattr(job, "status", "unknown")
+                print(f"[Supadata job poll] status={status}")
+
+                if status == "completed":
+                    raw_text = getattr(job, "content", "")
+                    break
+                elif status in ("failed", "error"):
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Transcript job failed with status: {status}",
+                    )
+
+                time.sleep(2)
+
+            if not raw_text:
+                # we didn't get a completed transcript within polling limit
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Transcript job did not complete in time (last status: {status})",
+                )
+
+        else:
+            # Fallback: just string-ify whatever Supadata returned
+            status = "completed"
+            raw_text = str(transcript_result)
+
+        if not raw_text.strip():
+            raise HTTPException(
+                status_code=500,
+                detail="Transcript text is empty from Supadata",
+            )
+
+        # ---- CLEAN TEXT ----
+        # join spaces & tidy punctuation
         clean_text = re.sub(r"\s+", " ", raw_text).strip()
         clean_text = re.sub(r" ([.,!?])", r"\1", clean_text)
 
         # ---- TURN INTO PARAGRAPHS ----
-        # Simple heuristic: split on '।' (Hindi danda) and newline-like breaks.
-        # You can tweak this as you like.
         paragraphs: List[str] = [
             p.strip()
             for p in re.split(r"[।\n]", clean_text)
@@ -173,10 +233,11 @@ def yt_url_chunks_inmemory(
             )
 
         # ---- BUILD RESPONSE ----
-        # FetchedTranscript has metadata:
-        caption_type = "generated" if fetched.is_generated else "manual"
-        lang_code = fetched.language_code
-        lang_label = fetched.language  # e.g. "Hindi (auto-generated)"
+        # We don't get manual/auto flags from Supadata like youtube_transcript_api,
+        # so we mark them as 'unknown' / based on chosen_lang.
+        caption_type = "unknown"
+        lang_code = chosen_lang
+        lang_label = chosen_lang
 
         response_data = {
             "status": "ok",
@@ -189,6 +250,7 @@ def yt_url_chunks_inmemory(
             "collection_name": collection_name,
             "persist_dir": persist_dir,
             "reset_collection": reset_collection,
+            "supadata_job_status": status,
         }
 
         return JSONResponse(response_data)
@@ -198,3 +260,4 @@ def yt_url_chunks_inmemory(
     except Exception as e:
         print(f"Unexpected error in endpoint:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
